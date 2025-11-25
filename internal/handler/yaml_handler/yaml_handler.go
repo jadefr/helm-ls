@@ -21,6 +21,7 @@ type YamlHandler struct {
 	client          protocol.Client
 	yamllsConnector *yamlls.Connector
 	jsonSchemas     *jsonschema.JSONSchemaCache
+	currentURI      lsp.URI
 }
 
 // SetClient implements handler.LangHandler.
