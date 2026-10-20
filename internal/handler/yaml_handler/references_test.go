@@ -262,3 +262,51 @@ func TestReferences(t *testing.T) {
 		})
 	}
 }
+
+// TestReferencesDoNotLeakAcrossUnrelatedCharts is a regression test for
+// https://github.com/mrjosh/helm-ls/issues/182: references for a value in
+// one chart must not include templates from an unrelated sibling chart that
+// happens to be loaded in the same workspace/session.
+func TestReferencesDoNotLeakAcrossUnrelatedCharts(t *testing.T) {
+	chartAValues := "../../../testdata/siblingChartsExample/chartA/values.yaml"
+	chartBValues := "../../../testdata/siblingChartsExample/chartB/values.yaml"
+
+	h, fileContent := setupYamlHandlerTest(t, chartAValues, true)
+	pos, found := testutil.GetPositionOfMarkedLineInFile(fileContent, "^replicaCount: 1", "^")
+	assert.True(t, found)
+
+	// Load chartA's templates.
+	_, err := h.chartStore.GetChartForDoc(uri.File(chartAValues))
+	assert.NoError(t, err)
+
+	// Simulate the user having also opened an unrelated sibling chart in the
+	// same session, loading its templates into the same document store.
+	_, err = h.chartStore.GetChartForDoc(uri.File(chartBValues))
+	assert.NoError(t, err)
+
+	result, err := h.References(context.Background(), &lsp.ReferenceParams{
+		TextDocumentPositionParams: lsp.TextDocumentPositionParams{
+			TextDocument: lsp.TextDocumentIdentifier{
+				URI: uri.File(chartAValues),
+			},
+			Position: pos,
+		},
+	})
+	assert.NoError(t, err)
+
+	testutil.AssertLocationsResult(t, result, []testutil.ExpectedLocationsResult{
+		{
+			Filepath:   chartAValues,
+			MarkedLine: "§replicaCount§: 1",
+		},
+		{
+			Filepath:   "../../../testdata/siblingChartsExample/chartA/templates/deployment.yaml",
+			MarkedLine: "replicas: {{ .Values.§replicaCount§ }}",
+		},
+	})
+
+	for _, location := range result {
+		assert.NotContains(t, location.URI.Filename(), "chartB",
+			"reference from unrelated sibling chart chartB leaked into chartA's results: %s", location.URI)
+	}
+}
